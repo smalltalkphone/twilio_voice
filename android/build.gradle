@@ -52,7 +52,12 @@ android {
     buildTypes {
         release {
             minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // AGP 8.6+ rejects proguard-android.txt outright: it contains
+            // -dontoptimize, which disables most R8 optimizations. The
+            // optimize variant is the supported replacement and is what every
+            // current Flutter app template uses, so this is a straight swap,
+            // not a behaviour change for consumers.
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }
