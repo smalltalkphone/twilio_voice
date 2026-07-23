@@ -52,11 +52,27 @@ object TelecomManagerExtension {
             .setCapabilities(PhoneAccount.CAPABILITY_CALL_PROVIDER or PhoneAccount.CAPABILITY_CONNECTION_MANAGER or PhoneAccount.CAPABILITY_CALL_SUBJECT)
             .setShortDescription(description)
 //            .addSupportedUriScheme(TVConnectionService.TWI_SCHEME)
-            .setIcon(Icon.createWithResource(ctx, ctx.applicationInfo.icon))
+            .setIcon(Icon.createWithResource(ctx, phoneAccountIcon(ctx)))
             .addSupportedUriScheme(PhoneAccount.SCHEME_TEL)
             .build()
 
         registerPhoneAccount(phoneAccount)
+    }
+
+    /**
+     * Drawable to show for this PhoneAccount in Settings -> Calling accounts.
+     *
+     * Prefers a drawable the host app names `ic_phone_account`, falling back to
+     * the app's launcher icon (the previous, unconditional behaviour) when it
+     * defines none - so this is backwards compatible for any existing consumer.
+     *
+     * Why: the launcher icon is a full-colour, rounded product mark, but the
+     * system renders this one small (~24px) in a themed list. Apps generally
+     * want a dedicated single-colour mark there, and had no way to supply one.
+     */
+    private fun phoneAccountIcon(ctx: Context): Int {
+        val res = ctx.resources.getIdentifier("ic_phone_account", "drawable", ctx.packageName)
+        return if (res != 0) res else ctx.applicationInfo.icon
     }
 
     fun TelecomManager.openPhoneAccountSettings(activity: Activity) {
