@@ -132,7 +132,30 @@ object TelecomManagerExtension {
     @RequiresPermission(value = "android.permission.READ_PHONE_STATE")
     fun TelecomManager.hasCallCapableAccount(ctx: Context, name: String): Boolean {
         if (!canReadPhoneState(ctx)) return false
-        return callCapablePhoneAccounts.any { it.componentName.className == name }
+        if (callCapablePhoneAccounts.any { it.componentName.className == name }) {
+            return true
+        }
+        // A SELF_MANAGED account is never returned by
+        // getCallCapablePhoneAccounts() — the platform excludes self-managed
+        // accounts from that list by design, since they are not available to
+        // the system dialer for placing calls.
+        //
+        // Checking only that list therefore reports "no registered phone
+        // account" for an account that Telecom has just confirmed registering,
+        // and the plugin refuses to place the call with:
+        //
+        //   E TwilioVoicePlugin: No registered phone account, call
+        //   `registerPhoneAccount()` first
+        //
+        // Observed on a Pixel 9 Pro immediately after switching this plugin to
+        // CAPABILITY_SELF_MANAGED: outgoing calls silently never dialled, and
+        // hang-up then failed too (ACTION_HANGUP with no EXTRA_CALL_HANDLE,
+        // because no call had been created to hang up).
+        //
+        // Ask about the account directly instead — getPhoneAccount() answers
+        // for self-managed and managed accounts alike, and needs no API-level
+        // guard, unlike getSelfManagedPhoneAccounts() (API 31+).
+        return getPhoneAccount(getPhoneAccountHandle(ctx)) != null
     }
 
     /**
