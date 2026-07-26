@@ -44,8 +44,24 @@ class TVCallInviteConnection(
         setCallParameters(callParams)
     }
 
+    /**
+     * Telecom's signal that a SELF-MANAGED app must now show its own incoming
+     * UI. A CALL_PROVIDER account never sees this — the system dialer does the
+     * ringing — which is why the plugin never implemented it and why incoming
+     * calls were silently invisible once the account became self-managed.
+     *
+     * Android calls this INSTEAD of showing anything itself. If nothing here
+     * posts a notification, nothing happens at all.
+     */
+    override fun onShowIncomingCallUi() {
+        Log.d(TAG, "onShowIncomingCallUi: announcing incoming call")
+        super.onShowIncomingCallUi()
+        TVIncomingCallNotification.show(context, getCallParameters()?.from ?: "Incoming call")
+    }
+
     override fun onAnswer() {
         Log.d(TAG, "onAnswer: onAnswer")
+        TVIncomingCallNotification.dismiss(context)
         super.onAnswer()
         twilioCall = callInvite.accept(context, this)
         onAction?.onChange(TVNativeCallActions.ACTION_ANSWERED, Bundle().apply {
@@ -66,6 +82,7 @@ class TVCallInviteConnection(
 
     override fun onReject() {
         Log.d(TAG, "onReject: onReject")
+        TVIncomingCallNotification.dismiss(context)
         super.onReject()
         callInvite.reject(context)
         // if the call was answered, then immediately rejected/ended, we need to disconnect the call also
@@ -269,6 +286,11 @@ open class TVCallConnection(
     override fun onDisconnect() {
         super.onDisconnect()
         Log.i(TAG, "onDisconnect: onDisconnect")
+        // Belt and braces: the invite paths dismiss on answer/reject, but a
+        // caller who gives up while it is still ringing arrives HERE. An
+        // ongoing notification the user cannot dismiss is worse than never
+        // having posted one, so every exit takes it down.
+        TVIncomingCallNotification.dismiss(context)
         twilioCall?.disconnect()
         setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
         this.onDisconnected?.withValue(DisconnectCause(DisconnectCause.LOCAL))
