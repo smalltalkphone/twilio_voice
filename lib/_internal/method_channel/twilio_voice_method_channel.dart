@@ -353,6 +353,19 @@ class MethodChannelTwilioVoice extends TwilioVoicePlatform {
         // macOS / web call reject from string: "Call Rejected"
         call.activeCall = null;
         return CallEvent.declined;
+      } else if (tokens[1].contains("Call Error:")) {
+        // Every OTHER connect failure. The native side emits
+        // `logEvent("Call Error: <code>, <message>")` from onConnectFailure
+        // (TwilioVoicePlugin.kt, EVENT_CONNECT_FAILURE), and until now that
+        // landed here as an untyped `log` with its payload dropped — so
+        // 31404 (not found), 31005 (connection error) and 13247 (invalid
+        // caller ID) were INVISIBLE to Dart. Busy worked only because its
+        // three codes happen to be decoded above.
+        //
+        // Checked AFTER the busy/rejected branches so their meaning is
+        // unchanged: a busy signal is still `declined`, not a failure.
+        call.activeCall = null;
+        return CallEvent.connectFailure;
       }
       return CallEvent.log;
     } else if (state.startsWith("Connected|")) {
