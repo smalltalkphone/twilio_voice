@@ -56,7 +56,12 @@ class TVCallInviteConnection(
     override fun onShowIncomingCallUi() {
         Log.d(TAG, "onShowIncomingCallUi: announcing incoming call")
         super.onShowIncomingCallUi()
-        TVIncomingCallNotification.show(context, getCallParameters()?.from ?: "Incoming call")
+        val params = getCallParameters()
+        TVIncomingCallNotification.show(
+            context,
+            params?.from ?: "Incoming call",
+            counterpartyNumber(params?.fromRaw),
+        )
     }
 
     override fun onAnswer() {
@@ -276,6 +281,13 @@ open class TVCallConnection(
     override fun onAbort() {
         super.onAbort()
         Log.i(TAG, "onAbort: onAbort")
+        // THIS is where a caller who gives up mid-ring lands: the cancelled
+        // invite arrives over FCM and is routed to onAbort — not to
+        // onDisconnect, which an earlier comment here wrongly credited with
+        // that case (onDisconnect is the local user hanging up). Miss the
+        // dismiss here and the phone keeps showing — and, with the insistent
+        // ring, SOUNDING — a call that no longer exists.
+        TVIncomingCallNotification.dismiss(context)
         twilioCall?.disconnect()
         setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
         onAction?.onChange(TVNativeCallActions.ACTION_ABORT, null)
@@ -286,10 +298,9 @@ open class TVCallConnection(
     override fun onDisconnect() {
         super.onDisconnect()
         Log.i(TAG, "onDisconnect: onDisconnect")
-        // Belt and braces: the invite paths dismiss on answer/reject, but a
-        // caller who gives up while it is still ringing arrives HERE. An
-        // ongoing notification the user cannot dismiss is worse than never
-        // having posted one, so every exit takes it down.
+        // The local-hangup exit. Every path out of a ringing call takes the
+        // announcement down — an ongoing notification the user cannot dismiss
+        // is worse than never having posted one.
         TVIncomingCallNotification.dismiss(context)
         twilioCall?.disconnect()
         setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
@@ -358,8 +369,13 @@ open class TVCallConnection(
         Log.d(TAG, "onAnswer: onAnswer")
     }
 
+    // The two overloads below are alternate Telecom reject paths — a
+    // Bluetooth headset, car kit, or wearable can decline with a reason or a
+    // reply message and never touch the plain onReject() above. They must
+    // take the ring announcement down like every other exit.
     override fun onReject(rejectReason: Int) {
         Log.d(TAG, "onReject: onReject $rejectReason")
+        TVIncomingCallNotification.dismiss(context)
         super.onReject(rejectReason)
         twilioCall?.disconnect()
         onAction?.onChange(TVNativeCallActions.ACTION_REJECTED, null)
@@ -367,6 +383,7 @@ open class TVCallConnection(
 
     override fun onReject(replyMessage: String?) {
         Log.d(TAG, "onReject: onReject $replyMessage")
+        TVIncomingCallNotification.dismiss(context)
         super.onReject(replyMessage)
         twilioCall?.disconnect()
         onAction?.onChange(TVNativeCallActions.ACTION_REJECTED, Bundle().apply {

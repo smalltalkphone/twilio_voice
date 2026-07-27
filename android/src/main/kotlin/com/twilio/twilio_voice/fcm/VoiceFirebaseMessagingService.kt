@@ -4,7 +4,8 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.telecom.*
 import android.util.Log
 import androidx.annotation.RequiresPermission
@@ -13,6 +14,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.twilio.twilio_voice.receivers.TVBroadcastReceiver
 import com.twilio.twilio_voice.service.TVConnectionService
+import com.twilio.twilio_voice.service.TVIncomingCallNotification
 import com.twilio.twilio_voice.storage.StorageImpl
 import com.twilio.twilio_voice.types.TelecomManagerExtension.canReadPhoneNumbers
 import com.twilio.voice.CallException
@@ -158,16 +160,36 @@ class VoiceFirebaseMessagingService : FirebaseMessagingService(), MessageListene
         }
     }
 
+    /**
+     * The caller gave up (or the invite timed out) before the call was
+     * answered — the ordinary end of every unanswered call.
+     *
+     * This used to `startForegroundService(ACTION_CANCEL_CALL_INVITE)`, but
+     * the service's cancel branch never called `startForeground()`, so
+     * Android killed the whole process for the broken promise
+     * (`ForegroundServiceDidNotStartInTimeException`) — on a missed call,
+     * with the app in the foreground, taking the incoming-call notification's
+     * owner down with it while the notification itself survived. Cancelling
+     * an invite needs no service start at all: the connection lives in this
+     * process (`TVConnectionService.activeConnections`), so tear it down
+     * directly on the main thread, where Telecom callbacks belong.
+     */
     override fun onCancelledCallInvite(cancelledCallInvite: CancelledCallInvite, callException: CallException?) {
         Log.d(TAG, "onCancelledCallInvite: ", callException)
-        Intent(applicationContext, TVConnectionService::class.java).apply {
-            action = TVConnectionService.ACTION_CANCEL_CALL_INVITE
-            putExtra(TVConnectionService.EXTRA_CANCEL_CALL_INVITE, cancelledCallInvite)
-//            applicationContext.startService(this)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(this) // Ensure it's started as a foreground service
-            } else {
-                applicationContext.startService(this)
+        val callSid = cancelledCallInvite.callSid
+        Handler(Looper.getMainLooper()).post {
+            TVConnectionService.getConnection(callSid)?.onAbort() ?: run {
+                Log.w(TAG, "onCancelledCallInvite: no connection for $callSid")
+            }
+            // Orphan backstop: if the process was restarted between invite and
+            // cancel, no Connection exists to dismiss the ring — but the
+            // notification survives process death and must not outlive its
+            // call. Only skip when a DIFFERENT invite is still legitimately
+            // ringing (the shared NOTIFICATION_ID belongs to it, not us).
+            val otherStillRinging = TVConnectionService.getIncomingCallHandle()
+                ?.let { it != callSid } ?: false
+            if (!otherStillRinging) {
+                TVIncomingCallNotification.dismiss(applicationContext)
             }
         }
     }

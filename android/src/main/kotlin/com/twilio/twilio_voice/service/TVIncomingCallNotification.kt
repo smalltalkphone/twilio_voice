@@ -13,6 +13,28 @@ import com.twilio.twilio_voice.R
 import com.twilio.twilio_voice.types.ContextExtension.appName
 
 /**
+ * The bare number inside whatever handle Twilio hands us, or null when there
+ * isn't one. `sip:5550009@domain` -> `5550009`; `client:app-9537526` ->
+ * `9537526`; `+14165550001` -> `+14165550001`; a display name -> null.
+ *
+ * Shared by [TVIncomingCallNotification] (the notification's subtitle) and
+ * `TVConnectionService.applyParameters` (the Telecom address), so the two
+ * surfaces can never disagree about what the counterparty's number is.
+ * A leading `+` survives so a PSTN handle stays a valid `tel:` URI.
+ */
+internal fun counterpartyNumber(raw: String?): String? {
+    if (raw.isNullOrEmpty()) return null
+    val userPart = raw
+        .removePrefix("sip:")
+        .substringBefore("@")
+        .removePrefix("client:")
+        .removePrefix("app-")
+    val plus = if (userPart.startsWith("+")) "+" else ""
+    val digits = userPart.filter { it.isDigit() }
+    return if (digits.isEmpty()) null else plus + digits
+}
+
+/**
  * The incoming-call announcement for a SELF-MANAGED ConnectionService.
  *
  * A `CAPABILITY_SELF_MANAGED` account gets no help from the system dialer: it
@@ -71,7 +93,10 @@ object TVIncomingCallNotification {
     }
 
     /**
-     * Post the incoming-call notification. [from] is shown as the caller.
+     * Post the incoming-call notification. [from] is shown as the caller;
+     * [number] (when known and different from [from]) becomes the subtitle,
+     * so a lock screen reads "Lincoln's Phone / 555-0002" rather than a bare
+     * name with no way to tell which line is calling.
      *
      * The full-screen intent is the mechanism that surfaces a call over the
      * lock screen and above other apps. When the device is unlocked and in
@@ -79,7 +104,7 @@ object TVIncomingCallNotification {
      * that is correct behaviour, not a failure, and the notification carries
      * enough on its own to be actionable in that case.
      */
-    fun show(ctx: Context, from: String) {
+    fun show(ctx: Context, from: String, number: String? = null) {
         val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
         if (launch == null) {
             // Nothing to open. Better to log than to post a notification whose
@@ -94,10 +119,18 @@ object TVIncomingCallNotification {
         }
         val pending = PendingIntent.getActivity(ctx, NOTIFICATION_ID, launch, flags)
 
+        // "555-0002" under the name, but never the same string twice — when no
+        // name resolved, [from] already IS the number and the subtitle would
+        // just repeat the title.
+        val subtitle = number
+            ?.let { if (it.length == 7) "${it.take(3)}-${it.drop(3)}" else it }
+            ?.takeIf { !from.contains(it) }
+            ?: "Incoming call"
+
         val n = Notification.Builder(ctx, channel(ctx).id).apply {
             setSmallIcon(R.drawable.ic_microphone)
             setContentTitle(from)
-            setContentText("Incoming call")
+            setContentText(subtitle)
             // CATEGORY_CALL is what tells the system this is a call: it ranks
             // above other notifications, survives Do Not Disturb where the
             // user has allowed calls, and on Android 14+ is the category that
@@ -108,7 +141,25 @@ object TVIncomingCallNotification {
             setContentIntent(pending)
             setFullScreenIntent(pending, true)
             setVisibility(Notification.VISIBILITY_PUBLIC)
-        }.build()
+            // Backstop, not the mechanism: every exit path dismisses, but a
+            // Twilio invite dies at ~30s and a call notification that outlives
+            // its call is its own bug — so if some exit is ever missed (a
+            // process death mid-ring, a teardown shape from the #399 family),
+            // the system clears it rather than leaving an undismissable,
+            // looping ring.
+            setTimeoutAfter(60_000L)
+        }.build().apply {
+            // A channel's sound plays ONCE per notification. A phone call
+            // rings until answered or abandoned. INSISTENT is the flag that
+            // loops the sound and vibration until the notification is
+            // cancelled — without it a phone in a pocket gets a few seconds
+            // of ringtone and then silence for the rest of the ring window,
+            // which reads as "it rang" on a bench and as "it never rang" to a
+            // parent across the room.
+            // (`this.` is load-bearing: the local PendingIntent `flags` val
+            // above shadows the Notification field inside this apply.)
+            this.flags = this.flags or Notification.FLAG_INSISTENT
+        }
 
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, n)
