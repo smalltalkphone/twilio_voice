@@ -519,6 +519,22 @@ class TVConnectionService : ConnectionService() {
         applyParameters(connection, callParams)
         connection.setRinging()
 
+        // Announce here, NOT from Connection.onShowIncomingCallUi(). Telecom
+        // does not call that callback on this path — verified on a Pixel 9 Pro
+        // (Android 16, targetSdk 36) 2026-07-27: the invite arrives, the
+        // connection is created and set ringing, Telecom logs
+        // "SET_RINGING, successful incoming call" and then stands back
+        // (RingerAttributes{mEndEarly=true, isSelfManaged=true} — a
+        // self-managed account gets no system ring by design), but
+        // onShowIncomingCallUi() never fires, so nothing was ever posted and a
+        // backgrounded phone showed no trace of the call. This hook does fire
+        // on every incoming call, so the announcement lives here.
+        TVIncomingCallNotification.show(
+            applicationContext,
+            callParams.from,
+            counterpartyNumber(callParams.fromRaw),
+        )
+
         startForegroundService()
         return connection
     }
