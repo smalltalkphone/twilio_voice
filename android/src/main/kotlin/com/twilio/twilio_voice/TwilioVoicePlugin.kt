@@ -320,6 +320,36 @@ class TwilioVoicePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamH
     override fun onListen(arguments: Any?, events: EventSink?) {
         Log.i(TAG, "Setting event sink")
         this.eventSink = events
+
+        // Replay a call that is ALREADY ringing.
+        //
+        // This event channel is a plain broadcast stream with no replay, so an
+        // invite that arrives before Flutter has finished booting is lost for
+        // good. On a cold start that is the normal ordering: FCM wakes a dead
+        // process, the ConnectionService creates the connection and posts the
+        // incoming-call notification within ~200ms, and only then does Dart
+        // attach — by which time `Incoming` has been and gone. The app then
+        // renders its dashboard with no way to answer a phone that is audibly
+        // ringing (bench 2026-07-27, #350 row 5).
+        //
+        // Dart cannot recover this for itself: `activeCall` is a cache fed by
+        // these very events, so it is null in exactly this case. Re-emitting on
+        // attach costs nothing when idle and restores the normal pipeline.
+        //
+        // fromRaw/toRaw, NOT from/to — `from` is the resolved display name
+        // ("Griffin") while the live path sends the raw handle. Sending the
+        // name here would put a name where a number belongs and reintroduce
+        // #431 through the back door.
+        TVConnectionService.getIncomingCallHandle()?.let { sid ->
+            TVConnectionService.getConnection(sid)?.getCallParameters()?.let { p ->
+                Log.i(TAG, "onListen: replaying in-progress incoming call to a late listener")
+                val params = JSONObject().apply {
+                    p.customParameters.forEach { (key, value) -> put(key, value) }
+                }.toString()
+                logEvents("", arrayOf("Incoming", p.fromRaw, p.toRaw, CallDirection.INCOMING.label, params))
+                logEvents("", arrayOf("Ringing", p.fromRaw, p.toRaw, CallDirection.INCOMING.label, params))
+            }
+        }
     }
 
     override fun onCancel(arguments: Any?) {
