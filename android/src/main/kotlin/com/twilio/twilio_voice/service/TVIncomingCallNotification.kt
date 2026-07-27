@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Person
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.RingtoneManager
@@ -136,6 +137,34 @@ object TVIncomingCallNotification {
             // user has allowed calls, and on Android 14+ is the category that
             // makes USE_FULL_SCREEN_INTENT grantable to a calling app.
             setCategory(Notification.CATEGORY_CALL)
+            // Who is calling, as something the SYSTEM can match rather than
+            // just render. Do Not Disturb's "calls from contacts" filter tests
+            // the people attached to a notification against the user's
+            // contacts; with none attached there is nothing to match and the
+            // notification is silenced no matter who is calling.
+            //
+            // Verified 2026-07-27: with the caller saved AND starred in
+            // contacts — `content://com.android.contacts/phone_lookup/5550007`
+            // resolving to that contact — DND still suppressed us completely,
+            // because CATEGORY_CALL alone does not say WHO.
+            //
+            // The tel: URI carries the bare digits, which is the form the
+            // lookup matches on.
+            number?.let { digits ->
+                val uri = "tel:$digits"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    addPerson(
+                        Person.Builder()
+                            .setName(from)
+                            .setUri(uri)
+                            .setImportant(true)
+                            .build()
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    addPerson(uri)
+                }
+            }
             setOngoing(true)
             setAutoCancel(false)
             setContentIntent(pending)
