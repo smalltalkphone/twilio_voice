@@ -548,6 +548,22 @@ class TVConnectionService : ConnectionService() {
         applyParameters(connection, callParams)
         connection.setRinging()
 
+        // Announce here, NOT from Connection.onShowIncomingCallUi(). Telecom
+        // does not call that callback on this path — verified on a Pixel 9 Pro
+        // (Android 16, targetSdk 36) 2026-07-27: the invite arrives, the
+        // connection is created and set ringing, Telecom logs
+        // "SET_RINGING, successful incoming call" and then stands back
+        // (RingerAttributes{mEndEarly=true, isSelfManaged=true} — a
+        // self-managed account gets no system ring by design), but
+        // onShowIncomingCallUi() never fires, so nothing was ever posted and a
+        // backgrounded phone showed no trace of the call. This hook does fire
+        // on every incoming call, so the announcement lives here.
+        TVIncomingCallNotification.show(
+            applicationContext,
+            callParams.from,
+            counterpartyNumber(callParams.fromRaw),
+        )
+
         startForegroundService()
         return connection
     }
@@ -723,13 +739,28 @@ class TVConnectionService : ConnectionService() {
      * Apply the given parameters to the given connection. This sets the address, caller display name and subject, any and all if present.
      * @param connection The connection to apply the parameters to.
      * @param params The parameters to apply to the connection.
+     *
+     * Address and display name are DIFFERENT fields of the Telecom contract:
+     * the address is WHO the call is with (a `tel:` URI a call log or redial
+     * can act on), the display name is WHAT to show. They used to be set from
+     * the same resolved string, which held only as long as that string was a
+     * number — the moment `__TWI_CALLER_NAME` started carrying a person's
+     * name, Telecom calls appeared with `handle=tel:Griffin`: nonsense on its
+     * face, and silently unrecordable by anything that parses the handle.
+     * The number comes from the RAW handle; the name never enters the URI.
      */
     private fun <T: TVCallConnection> applyParameters(connection: T, params: TVParameters) {
         params.getExtra(TVParameters.PARAM_SUBJECT, null)?.let {
             connection.extras.putString(TelecomManager.EXTRA_CALL_SUBJECT, it)
         }
-        val name = if(connection.callDirection == CallDirection.OUTGOING) params.to else params.from
-        connection.setAddress(Uri.fromParts(PhoneAccount.SCHEME_TEL, name, null), TelecomManager.PRESENTATION_ALLOWED)
+        val outgoing = connection.callDirection == CallDirection.OUTGOING
+        val name = if (outgoing) params.to else params.from
+        val number = counterpartyNumber(if (outgoing) params.toRaw else params.fromRaw)
+        // No number in the raw handle -> the plugin's own twi: scheme, never a
+        // tel: URI that isn't a number.
+        val address = number?.let { Uri.fromParts(PhoneAccount.SCHEME_TEL, it, null) }
+            ?: Uri.fromParts(TWI_SCHEME, name, null)
+        connection.setAddress(address, TelecomManager.PRESENTATION_ALLOWED)
         connection.setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)
     }
 

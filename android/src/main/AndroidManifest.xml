@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <!-- Android 14+ gates full-screen intents behind this. It is granted by
+         default only to apps that are plausibly calling or alarm apps — which
+         this is, via the ConnectionService above — and it is what lets an
+         incoming call show over the lock screen rather than as a quiet
+         notification. Without it a self-managed call announces itself only as
+         a banner, and not at all on a locked phone. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
 
