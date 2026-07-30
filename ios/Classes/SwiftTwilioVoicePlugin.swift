@@ -628,7 +628,21 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         var from:String = callInvite.from ?? defaultCaller
         from = from.replacingOccurrences(of: "client:", with: "")
 
-        self.sendPhoneCallEvents(description: "Ringing|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
+        // "Incoming|", not "Ringing|" — the Dart layer switches on this leading
+        // token, and only the `Incoming|` branch produces `CallEvent.incoming`
+        // and stamps `CallDirection.incoming`. iOS emitted `Ringing|` here, so
+        // an inbound invite arrived as a plain ringing event with the direction
+        // defaulted to OUTGOING, and `CallEvent.incoming` was never produced on
+        // iOS at all — leaving an app no way to learn who was calling.
+        //
+        // The rest of the string already matched Android's shape
+        // (`from|to|Incoming|{params}`, since `Incoming` is the direction field
+        // here), so only the token differs. Android sends
+        // `arrayOf("Incoming", from, to, CallDirection.INCOMING.label, params)`.
+        //
+        // Outgoing ringing is unaffected: it has its own emitter in
+        // `callDidStartRinging` below, which still sends `Ringing|`.
+        self.sendPhoneCallEvents(description: "Incoming|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
         reportIncomingCall(from: from, uuid: callInvite.uuid, callerName: callerName(params: callInvite.customParameters))
         self.callInvite = callInvite
     }
