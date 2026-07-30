@@ -20,6 +20,12 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
     let kCachedDeviceToken = "CachedDeviceToken"
     let kCachedBindingDate = "CachedBindingDate"
     let kClientList = "TwilioContactList"
+
+    /// Twilio's reserved custom parameter for an inbound caller's display name.
+    /// Same constant Android uses as `TVParameters.PARAM_CALLER_NAME`; kept
+    /// spelled identically so the two platforms cannot drift apart.
+    let kTwiCallerNameParam = "__TWI_CALLER_NAME"
+
     private var clients: [String:String]!
     
     var accessToken:String?
@@ -621,10 +627,37 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         
         var from:String = callInvite.from ?? defaultCaller
         from = from.replacingOccurrences(of: "client:", with: "")
-        
+
         self.sendPhoneCallEvents(description: "Ringing|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
-        reportIncomingCall(from: from, uuid: callInvite.uuid)
+        reportIncomingCall(from: from, uuid: callInvite.uuid, callerName: callerName(params: callInvite.customParameters))
         self.callInvite = callInvite
+    }
+
+    /// The display name a `<Client>` leg asked us to show, if it sent one.
+    ///
+    /// Android has honoured the `__TWI_CALLER_NAME` custom parameter for a long
+    /// time (`TVParameters.PARAM_CALLER_NAME`) and takes it verbatim, ahead of
+    /// any local lookup. iOS never read it at all, so a server that names its
+    /// callers correctly still produced "Unknown Caller" on CallKit — the
+    /// asymmetry was in the plugin, not in the caller's data.
+    ///
+    /// That matters more on iOS than the equivalent did on Android: on a locked
+    /// phone the CallKit banner is the only caller identity the user gets.
+    ///
+    /// Falls through to nil on a missing, non-string or blank value, so the
+    /// existing `clients` lookup and `defaultCaller` behaviour is untouched for
+    /// anyone not sending the parameter.
+    ///
+    /// Takes `[String: Any]?` deliberately, matching `formatCustomParams` just
+    /// below: that is the type the SDK's dictionary already converts to at this
+    /// boundary, so the `as? String` stays a real cast rather than a
+    /// redundant-downcast warning if the SDK ever declares its values as String.
+    private func callerName(params: [String:Any]?) -> String? {
+        guard let raw = params?[kTwiCallerNameParam] as? String else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
     
     func formatCustomParams(params: [String:Any]?)->String{
@@ -930,12 +963,16 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         }
     }
     
-    func reportIncomingCall(from: String, uuid: UUID) {
+    func reportIncomingCall(from: String, uuid: UUID, callerName: String? = nil) {
         let callHandle = CXHandle(type: .generic, value: from)
-        
+
         let callUpdate = CXCallUpdate()
         callUpdate.remoteHandle = callHandle
-        callUpdate.localizedCallerName = clients[from] ?? self.clients["defaultCaller"] ?? defaultCaller
+        // `callerName` first: a name the SERVER sent for this specific call beats
+        // any locally cached list, exactly as Android treats the same parameter.
+        // Everything after it is the original precedence, unchanged, so callers
+        // that send no name behave as before.
+        callUpdate.localizedCallerName = callerName ?? clients[from] ?? self.clients["defaultCaller"] ?? defaultCaller
         callUpdate.supportsDTMF = true
         callUpdate.supportsHolding = true
         callUpdate.supportsGrouping = false
