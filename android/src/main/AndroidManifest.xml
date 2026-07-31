@@ -15,13 +15,24 @@
          notification. Without it a self-managed call announces itself only as
          a banner, and not at all on a locked phone. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- phoneCall is what this service IS (a Telecom ConnectionService with an
+         active call), and — with MANAGE_OWN_CALLS above — the one FGS type
+         Android permits starting from the BACKGROUND, which is where every
+         incoming call begins. Typed `microphone` alone (a while-in-use type),
+         every backgrounded incoming call's startForeground() was refused with
+         a SecurityException — swallowed, and free of visible symptoms only
+         because answering foregrounds the app (app #603/#434, 2026-07-27
+         bench, all six matrix rows). microphone stays DECLARED so a runtime
+         start may add it later (e.g. once foregrounded); it is no longer what
+         the incoming-call start asks for. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
 
     <application>
         <service
             android:name=".service.TVConnectionService"
             android:exported="true"
-            android:foregroundServiceType="microphone"
+            android:foregroundServiceType="phoneCall|microphone"
             android:label="@string/connection_service_name"
             android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
             <intent-filter>

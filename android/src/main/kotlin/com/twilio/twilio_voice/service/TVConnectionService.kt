@@ -799,8 +799,21 @@ class TVConnectionService : ConnectionService() {
         Log.d(TAG, "[VoiceConnectionService] Starting foreground service")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                // Optional for Android +11, required for Android +14
-                startForeground(SERVICE_TYPE_MICROPHONE, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                // Optional for Android +11, required for Android +14.
+                //
+                // PHONE_CALL, not MICROPHONE (app #603/#434). This start runs
+                // the moment a call arrives — i.e. from the BACKGROUND — and
+                // microphone is a while-in-use type, so Android refused it
+                // with a SecurityException on every backgrounded incoming
+                // call (2026-07-27 bench). phoneCall + MANAGE_OWN_CALLS is
+                // the calling-app path the platform actually permits from the
+                // background. Deliberately NOT phoneCall|microphone here:
+                // every type passed must be individually eligible, so adding
+                // the while-in-use type would recreate the refusal this
+                // change removes; call audio rides the active self-managed
+                // Telecom call, not the FGS type. (SERVICE_TYPE_MICROPHONE
+                // is just this service's notification id, 100.)
+                startForeground(SERVICE_TYPE_MICROPHONE, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
             } else {
                 startForeground(SERVICE_TYPE_MICROPHONE, notification)
             }
