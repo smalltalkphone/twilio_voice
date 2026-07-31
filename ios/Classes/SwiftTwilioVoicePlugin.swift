@@ -115,20 +115,42 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
             }
             self.accessToken = token;
             guard let deviceToken = deviceToken else {
-                self.sendPhoneCallEvents(description: "LOG|Device token is nil. Cannot register for VoIP push notifications.", isError: true)
+                // PushKit has not handed us a device token yet. On the FIRST
+                // launch of a fresh install that is routine, not an error: the
+                // token is minted a moment after launch, and the access token
+                // stored just above is what lets pushRegistry(didUpdate:)
+                // finish the registration on its own.
+                //
+                // What is NOT acceptable is returning without answering. This
+                // guard used to `return` before the `result(true)` at the end
+                // of handle(), so the Dart Future returned by setTokens never
+                // completed AT ALL and every caller awaiting it waited forever.
+                // Answer false: not registered yet, ask again later.
+                self.sendPhoneCallEvents(description: "LOG|Device token is nil. Deferring registration until PushKit delivers one.", isError: true)
+                result(false)
                 return
             }
-            if let token = accessToken {
-                self.sendPhoneCallEvents(description: "LOG|pushRegistry:attempting to register with twilio", isError: false)
-                TwilioVoiceSDK.register(accessToken: token, deviceToken: deviceToken) { (error) in
-                    if let error = error {
-                        self.sendPhoneCallEvents(description: "LOG|An error occurred while registering: \(error.localizedDescription)", isError: false)
-                    }
-                    else {
-                        self.sendPhoneCallEvents(description: "LOG|Successfully registered for VoIP push notifications.", isError: false)
-                    }
+            self.sendPhoneCallEvents(description: "LOG|pushRegistry:attempting to register with twilio", isError: false)
+            TwilioVoiceSDK.register(accessToken: token, deviceToken: deviceToken) { (error) in
+                if let error = error {
+                    self.sendPhoneCallEvents(description: "LOG|An error occurred while registering: \(error.localizedDescription)", isError: false)
+                    // Hop to the platform thread: a FlutterResult may only be
+                    // invoked there, and the SDK gives no queue guarantee.
+                    DispatchQueue.main.async { result(false) }
+                }
+                else {
+                    self.sendPhoneCallEvents(description: "LOG|Successfully registered for VoIP push notifications.", isError: false)
+                    // Only a registration that actually succeeded resets the
+                    // TTL clock — see registrationRequired().
+                    UserDefaults.standard.set(Date(), forKey: self.kCachedBindingDate)
+                    DispatchQueue.main.async { result(true) }
                 }
             }
+            // Answered from the completion handler above, so do not fall
+            // through to the blanket `result(true)` at the end of handle() —
+            // that would answer before the registration had happened, and
+            // answering twice crashes the engine.
+            return
         } else if flutterCall.method == "makeCall" {
             guard let callTo = arguments["To"] as? String else {return}
             guard let callFrom = arguments["From"] as? String else {return}
@@ -479,8 +501,12 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         self.sendPhoneCallEvents(description: "LOG|pushRegistry:didUpdatePushCredentials:forType: device token updated", isError: false)
         let deviceToken = credentials.token
         
-        self.sendPhoneCallEvents(description: "LOG|pushRegistry:attempting to register with twilio", isError: false)
+        // Cache the token unconditionally — that it exists is a fact, and it is
+        // what lets a later `tokens` call register instead of deferring.
+        self.deviceToken = deviceToken
+
         if let token = accessToken {
+            self.sendPhoneCallEvents(description: "LOG|pushRegistry:attempting to register with twilio", isError: false)
             TwilioVoiceSDK.register(accessToken: token, deviceToken: deviceToken) { (error) in
                 if let error = error {
                     self.sendPhoneCallEvents(description: "LOG|An error occurred while registering: \(error.localizedDescription)", isError: false)
@@ -488,11 +514,23 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
                 }
                 else {
                     self.sendPhoneCallEvents(description: "LOG|Successfully registered for VoIP push notifications.", isError: false)
+                    // The binding date is written HERE and nowhere else on this
+                    // path. It used to be written unconditionally below, which
+                    // recorded a binding on the two occasions no registration
+                    // was even attempted — no access token yet, or the register
+                    // call failing. registrationRequired() then reported false
+                    // for half of the one-year TTL, so this delegate would bail
+                    // at the guard above and never retry: the plugin's own
+                    // safety net, disarmed by a binding that never existed.
+                    UserDefaults.standard.set(Date(), forKey: self.kCachedBindingDate)
                 }
             }
+        } else {
+            // Nothing registered: no access token has been supplied yet. The
+            // token is cached above, so the `tokens` call that follows sign-in
+            // completes the registration.
+            self.sendPhoneCallEvents(description: "LOG|pushRegistry:no access token yet, registration deferred until tokens is called.", isError: true)
         }
-        self.deviceToken = deviceToken
-        UserDefaults.standard.set(Date(), forKey: kCachedBindingDate)
 
     }
     
