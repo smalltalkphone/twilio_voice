@@ -288,6 +288,21 @@ open class TVCallConnection(
         // dismiss here and the phone keeps showing — and, with the insistent
         // ring, SOUNDING — a call that no longer exists.
         TVIncomingCallNotification.dismiss(context)
+        // The dismiss alone left the phone looking as if no call had ever
+        // happened (smalltalk_app #516) — an unanswered call must leave the
+        // trace every phone leaves. Only an INCOMING abort is a miss;
+        // answer and decline take their own exits and post nothing.
+        if (callDirection == CallDirection.INCOMING) {
+            val params = getCallParameters()
+            val number = counterpartyNumber(params?.fromRaw)
+            TVMissedCallNotification.show(
+                context,
+                params?.from
+                    ?: number?.let { if (it.length == 7) "${it.take(3)}-${it.drop(3)}" else it }
+                    ?: "Unknown caller",
+                number,
+            )
+        }
         twilioCall?.disconnect()
         setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
         onAction?.onChange(TVNativeCallActions.ACTION_ABORT, null)

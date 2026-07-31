@@ -12,9 +12,12 @@ import androidx.annotation.RequiresPermission
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.twilio.twilio_voice.call.TVParameters
 import com.twilio.twilio_voice.receivers.TVBroadcastReceiver
 import com.twilio.twilio_voice.service.TVConnectionService
 import com.twilio.twilio_voice.service.TVIncomingCallNotification
+import com.twilio.twilio_voice.service.TVMissedCallNotification
+import com.twilio.twilio_voice.service.counterpartyNumber
 import com.twilio.twilio_voice.storage.StorageImpl
 import com.twilio.twilio_voice.types.TelecomManagerExtension.canReadPhoneNumbers
 import com.twilio.voice.CallException
@@ -180,6 +183,21 @@ class VoiceFirebaseMessagingService : FirebaseMessagingService(), MessageListene
         Handler(Looper.getMainLooper()).post {
             TVConnectionService.getConnection(callSid)?.onAbort() ?: run {
                 Log.w(TAG, "onCancelledCallInvite: no connection for $callSid")
+                // The orphan miss (smalltalk_app #516): the process died
+                // between invite and cancel, so no Connection exists and
+                // onAbort — where the missed-call notice is normally posted —
+                // never runs. The phone still rang (the ringing notification
+                // survives process death), so the miss is real and must leave
+                // its trace. The cancelled invite carries the same custom
+                // parameters the ring resolved its name from.
+                val number = counterpartyNumber(cancelledCallInvite.from)
+                TVMissedCallNotification.show(
+                    applicationContext,
+                    cancelledCallInvite.customParameters[TVParameters.PARAM_CALLER_NAME]
+                        ?: number?.let { if (it.length == 7) "${it.take(3)}-${it.drop(3)}" else it }
+                        ?: "Unknown caller",
+                    number,
+                )
             }
             // Orphan backstop: if the process was restarted between invite and
             // cancel, no Connection exists to dismiss the ring — but the
