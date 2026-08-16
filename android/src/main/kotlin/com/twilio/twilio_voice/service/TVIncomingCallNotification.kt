@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Person
 import android.content.Context
+import android.content.Intent
+import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
@@ -102,8 +104,16 @@ object TVIncomingCallNotification {
      * The full-screen intent is the mechanism that surfaces a call over the
      * lock screen and above other apps. When the device is unlocked and in
      * use, Android deliberately downgrades it to a heads-up banner instead —
-     * that is correct behaviour, not a failure, and the notification carries
-     * enough on its own to be actionable in that case.
+     * that is correct behaviour, not a failure.
+     *
+     * Which is exactly why the Answer/Decline actions below are not optional.
+     * The downgraded banner is the ONLY thing an unlocked parent sees, and
+     * until 2026-08-15 it carried no actions at all: tapping it opened the app,
+     * which opened the call screen, which is where the call could finally be
+     * answered. Two taps to reach your own child, and invisible on a bench
+     * because every locked-phone test path shows the full-screen UI instead,
+     * where the notification's own buttons never appear. Found by a founder
+     * taking a real call from his son on an unlocked handset.
      */
     fun show(ctx: Context, from: String, number: String? = null) {
         val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
@@ -119,6 +129,28 @@ object TVIncomingCallNotification {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
         val pending = PendingIntent.getActivity(ctx, NOTIFICATION_ID, launch, flags)
+
+        // Answer and Decline, straight from the notification. These reach the
+        // SAME entry points the in-app call screen uses — ACTION_ANSWER ->
+        // acceptInvite(), ACTION_REJECT -> rejectInvite() — so there is one
+        // answer path and one decline path, not two implementations that can
+        // drift. Neither carries EXTRA_CALL_HANDLE: the service falls back to
+        // getIncomingCallHandle(), and while this notification is posted there
+        // is by definition exactly one ringing invite.
+        //
+        // Distinct request codes. FLAG_UPDATE_CURRENT keys on the request code,
+        // so reusing NOTIFICATION_ID here would have each PendingIntent
+        // overwrite the last and leave both buttons doing whichever was built
+        // most recently.
+        fun callAction(action: String, requestCode: Int): PendingIntent =
+            PendingIntent.getService(
+                ctx,
+                requestCode,
+                Intent(ctx, TVConnectionService::class.java).setAction(action),
+                flags,
+            )
+        val answerPending = callAction(TVConnectionService.ACTION_ANSWER, NOTIFICATION_ID + 1)
+        val declinePending = callAction(TVConnectionService.ACTION_REJECT, NOTIFICATION_ID + 2)
 
         // "555-0002" under the name, but never the same string twice — when no
         // name resolved, [from] already IS the number and the subtitle would
@@ -150,20 +182,59 @@ object TVIncomingCallNotification {
             //
             // The tel: URI carries the bare digits, which is the form the
             // lookup matches on.
-            number?.let { digits ->
-                val uri = "tel:$digits"
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    addPerson(
-                        Person.Builder()
-                            .setName(from)
-                            .setUri(uri)
-                            .setImportant(true)
-                            .build()
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    addPerson(uri)
-                }
+            val person = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Person.Builder()
+                    .setName(from)
+                    .apply { number?.let { setUri("tel:$it") } }
+                    .setImportant(true)
+                    .build()
+            } else {
+                null
+            }
+            if (person != null) {
+                addPerson(person)
+            } else {
+                @Suppress("DEPRECATION")
+                number?.let { addPerson("tel:$it") }
+            }
+
+            // CallStyle is what puts Answer and Decline ON the banner, styled
+            // as a call rather than as a notification with two buttons stuck to
+            // it. It needs a Person, which is why the Person is now built even
+            // when no digits resolved — a name-only Person still satisfies it,
+            // and the tel: URI is added when we have one so the DND matching
+            // above is unchanged.
+            //
+            // ⚠️ TRADE-OFF, deliberate: CallStyle renders the Person's name and
+            // its own "Incoming call" text, so [subtitle] — the "555-0005" line
+            // — is likely not shown on API 31+. That is acceptable because the
+            // case it exists for is the one where no name resolved, and there
+            // [from] IS the number, so it becomes the Person's name and the
+            // parent still sees it. The number is not lost where it is the only
+            // identity available. setContentText stays for the pre-31 path and
+            // for any surface that still reads it.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && person != null) {
+                setStyle(
+                    Notification.CallStyle.forIncomingCall(person, declinePending, answerPending)
+                )
+            } else {
+                // API 26-30: no CallStyle, so plain actions. Same intents, same
+                // order (decline first, matching CallStyle's own argument order
+                // and the platform dialer's layout).
+                addAction(
+                    Notification.Action.Builder(
+                        Icon.createWithResource(ctx, android.R.drawable.ic_menu_close_clear_cancel),
+                        "Decline",
+                        declinePending,
+                    ).build()
+                )
+                addAction(
+                    Notification.Action.Builder(
+                        Icon.createWithResource(ctx, android.R.drawable.sym_action_call),
+                        "Answer",
+                        answerPending,
+                    ).build()
+                )
             }
             setOngoing(true)
             setAutoCancel(false)
