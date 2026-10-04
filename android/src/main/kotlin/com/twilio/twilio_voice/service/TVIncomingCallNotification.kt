@@ -65,6 +65,9 @@ object TVIncomingCallNotification {
     /** One visible incoming call at a time, so a second invite replaces it. */
     const val NOTIFICATION_ID = 20260726
 
+    /** The launch-intent action the notification's Answer button carries. */
+    const val ACTION_ANSWER_FROM_NOTIFICATION = "com.twilio.twilio_voice.ANSWER_FROM_NOTIFICATION"
+
     private const val CHANNEL_SUFFIX = "_incoming_calls"
 
     /**
@@ -149,7 +152,22 @@ object TVIncomingCallNotification {
                 Intent(ctx, TVConnectionService::class.java).setAction(action),
                 flags,
             )
-        val answerPending = callAction(TVConnectionService.ACTION_ANSWER, NOTIFICATION_ID + 1)
+        // ANSWER OPENS THE APP, then the app answers. Answer used to be a
+        // service PendingIntent like Decline, which picked the call up without
+        // ever bringing the app forward. From a backgrounded or locked phone
+        // that left the call with no microphone — Android only grants the mic
+        // (a while-in-use permission) to an app the user can see — so the
+        // parent heard the child and the child heard nothing, with no call
+        // screen to notice it on (Pixel 9 Pro, build 49, 2026-10-03). Opening
+        // the activity is what makes the app visible, and the plugin answers
+        // from there through the same ACTION_ANSWER path
+        // ([TwilioVoicePlugin.answerIfAskedBy]). Decline stays a service
+        // intent: declining needs no microphone and should not open anything.
+        val answerLaunch = Intent(launch).apply {
+            action = ACTION_ANSWER_FROM_NOTIFICATION
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val answerPending = PendingIntent.getActivity(ctx, NOTIFICATION_ID + 1, answerLaunch, flags)
         val declinePending = callAction(TVConnectionService.ACTION_REJECT, NOTIFICATION_ID + 2)
 
         // "555-0002" under the name, but never the same string twice — when no
