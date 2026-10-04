@@ -96,6 +96,18 @@ class TVConnectionService : ConnectionService() {
         const val ACTION_ANSWER: String = "ACTION_ANSWER"
 
         /**
+         * Action used to DECLINE a still-ringing incoming call connection.
+         *
+         * Deliberately not [ACTION_HANGUP]. Hangup calls `disconnect()`, which
+         * ends a call that is already up; declining an invite must run
+         * [TVCallInviteConnection.rejectInvite] so that `callInvite.reject()`
+         * reaches Twilio and the disconnect cause is REJECTED rather than
+         * LOCAL. Routing a decline through hangup would look identical on the
+         * handset and tell the other end the wrong story.
+         */
+        const val ACTION_REJECT: String = "ACTION_REJECT"
+
+        /**
          * Action used to answer an incoming call connection.
          */
         const val ACTION_INCOMING_CALL: String = "ACTION_INCOMING_CALL"
@@ -324,6 +336,28 @@ class TVConnectionService : ConnectionService() {
                         connection.acceptInvite()
                     } else {
                         Log.e(TAG, "onStartCommand: [ACTION_ANSWER] could not find connection for callHandle: $callHandle")
+                    }
+                }
+
+                ACTION_REJECT -> {
+                    // Same handle resolution as ACTION_ANSWER, including the
+                    // getIncomingCallHandle() fallback — the notification's
+                    // action sends no handle, because when it fires there is by
+                    // definition exactly one ringing invite.
+                    val callHandle = it.getStringExtra(EXTRA_CALL_HANDLE) ?: getIncomingCallHandle() ?: run {
+                        Log.e(TAG, "onStartCommand: [ACTION_REJECT] no call handle")
+                        return@let
+                    }
+
+                    val connection = getConnection(callHandle) ?: run {
+                        Log.e(TAG, "onStartCommand: [ACTION_REJECT] could not find connection for callHandle: $callHandle")
+                        return@let
+                    }
+
+                    if (connection is TVCallInviteConnection) {
+                        connection.rejectInvite()
+                    } else {
+                        Log.e(TAG, "onStartCommand: [ACTION_REJECT] connection is not a ringing invite: $callHandle")
                     }
                 }
 

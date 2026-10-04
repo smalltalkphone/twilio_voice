@@ -23,6 +23,7 @@ import com.twilio.twilio_voice.constants.Constants
 import com.twilio.twilio_voice.constants.FlutterErrorCodes
 import com.twilio.twilio_voice.receivers.TVBroadcastReceiver
 import com.twilio.twilio_voice.service.TVConnectionService
+import com.twilio.twilio_voice.service.TVIncomingCallNotification
 import com.twilio.twilio_voice.storage.Storage
 import com.twilio.twilio_voice.storage.StorageImpl
 import com.twilio.twilio_voice.types.CallDirection
@@ -1354,6 +1355,9 @@ class TwilioVoicePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamH
         activityPluginBinding.addOnNewIntentListener(this)
         activityPluginBinding.addRequestPermissionsResultListener(this)
         registerReceiver()
+        // Cold start from the notification's Answer button: the intent that
+        // launched the activity is the only place the ask is recorded.
+        answerIfAskedBy(activityPluginBinding.activity.intent)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -1428,7 +1432,24 @@ class TwilioVoicePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamH
     //region Flutter NewIntentListener
     override fun onNewIntent(intent: Intent): Boolean {
         Log.d(TAG, "onNewIntent")
-        return false
+        return answerIfAskedBy(intent)
+    }
+
+    /**
+     * Answers the ringing call when [intent] came from the incoming-call
+     * notification's Answer button ([TVIncomingCallNotification]). That button
+     * opens the app first so the call gets the microphone; this is the second
+     * half, and it goes through the same [answer] path as the in-app button.
+     *
+     * The action is cleared once handled, so a later re-attach (rotation, a
+     * config change) reading the same intent cannot answer a second time.
+     */
+    private fun answerIfAskedBy(intent: Intent?): Boolean {
+        if (intent?.action != TVIncomingCallNotification.ACTION_ANSWER_FROM_NOTIFICATION) return false
+        Log.d(TAG, "answerIfAskedBy: Answer tapped on the incoming-call notification")
+        intent.action = null
+        answer()
+        return true
     }
     //endregion
 
