@@ -1156,7 +1156,12 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
             makeCall(to: callTo)
             completionHandler()
             self.sendPhoneCallEvents(description: "ReturningCall|\(identity)|\(user)|Outgoing", isError: false)
+            return
         }
+        // Not ours. iOS requires the handler to be called exactly once, and
+        // firebase_messaging (which forwards here) has already routed its own
+        // taps before calling us.
+        completionHandler()
     }
 
     public func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -1165,6 +1170,22 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         let userInfo = notification.request.content.userInfo
         if let type = userInfo["type"] as? String, type == "twilio-missed-call"{
             completionHandler([.alert])
+            return
+        }
+        // Smalltalk (2026-10-06): this delegate used to return without calling
+        // the handler for anything else, so a push from the app's own server
+        // (firebase_messaging forwards willPresent here, because this plugin
+        // set itself as the delegate first) was never shown while the app was
+        // open. Present a Firebase push like the system would in the
+        // background; leave anything else silent, as before.
+        if userInfo["gcm.message_id"] != nil {
+            if #available(iOS 14.0, *) {
+                completionHandler([.banner, .list, .sound, .badge])
+            } else {
+                completionHandler([.alert, .sound, .badge])
+            }
+        } else {
+            completionHandler([])
         }
     }
     
