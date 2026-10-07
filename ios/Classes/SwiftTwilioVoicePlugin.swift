@@ -422,18 +422,24 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
             
             self.checkRecordPermission { (permissionGranted) in
                 if (!permissionGranted) {
-                    let alertController: UIAlertController = UIAlertController(title: String(format:  NSLocalizedString("mic_permission_title", comment: "") , SwiftTwilioVoicePlugin.appName),
-                                                                               message: NSLocalizedString( "mic_permission_subtitle", comment: ""),
+                    // Every string here carries its own English default
+                    // (`value:`), under new keys: the old keys expected the
+                    // host app's Localizable.strings and showed as raw keys in
+                    // an app that ships none (same defect as the missed-call
+                    // notice). New keys, so an old strings file with a `%@` in
+                    // a different place can't mis-format these.
+                    let alertController: UIAlertController = UIAlertController(title: NSLocalizedString("mic_off_title", value: "Microphone is off", comment: "Alert when a call starts without microphone access"),
+                                                                               message: String(format: NSLocalizedString("mic_off_message", value: "%@ can't hear you without the microphone. You can turn it on in Settings.", comment: "%@ is the app name"), SwiftTwilioVoicePlugin.appName),
                                                                                preferredStyle: .alert)
                     
-                    let continueWithMic: UIAlertAction = UIAlertAction(title: NSLocalizedString("btn_continue_no_mic", comment: ""),
+                    let continueWithMic: UIAlertAction = UIAlertAction(title: NSLocalizedString("mic_off_continue", value: "Call without microphone", comment: ""),
                                                                        style: .default,
                                                                        handler: { (action) in
                                                                         self.performStartCallAction(uuid: uuid, handle: to)
                                                                        })
                     alertController.addAction(continueWithMic)
                     
-                    let goToSettings: UIAlertAction = UIAlertAction(title:NSLocalizedString("btn_settings", comment: ""),
+                    let goToSettings: UIAlertAction = UIAlertAction(title:NSLocalizedString("mic_off_settings", value: "Settings", comment: ""),
                                                                     style: .default,
                                                                     handler: { (action) in
                                                                         UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!,
@@ -442,7 +448,7 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
                                                                     })
                     alertController.addAction(goToSettings)
                     
-                    let cancel: UIAlertAction = UIAlertAction(title: NSLocalizedString("btn_cancel", comment: ""),
+                    let cancel: UIAlertAction = UIAlertAction(title: NSLocalizedString("mic_off_cancel", value: "Cancel", comment: ""),
                                                               style: .cancel,
                                                               handler: { (action) in
                                                                 //self.toggleUIState(isEnabled: true, showCallControl: false)
