@@ -728,7 +728,15 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
     public func cancelledCallInviteReceived(cancelledCallInvite: CancelledCallInvite, error: Error) {
         self.sendPhoneCallEvents(description: "Missed Call", isError: false)
         self.sendPhoneCallEvents(description: "LOG|cancelledCallInviteCanceled:", isError: false)
-        self.showMissedCallNotification(from: cancelledCallInvite.from, to: cancelledCallInvite.to)
+        // The name the ring showed, when this cancel belongs to the invite we
+        // announced: the router's `__TWI_CALLER_NAME` ("Griffin's Phone"),
+        // read the same way `reportIncomingCall` read it. Matched on callSid
+        // so a stale invite can never lend its name to a different call.
+        var ringName: String? = nil
+        if let ci = self.callInvite, ci.callSid == cancelledCallInvite.callSid {
+            ringName = callerName(params: ci.customParameters)
+        }
+        self.showMissedCallNotification(from: cancelledCallInvite.from, to: cancelledCallInvite.to, callerName: ringName)
         if (self.callInvite == nil) {
             self.sendPhoneCallEvents(description: "LOG|No pending call invite", isError: false)
             return
@@ -739,7 +747,19 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         }
     }
     
-    func showMissedCallNotification(from:String?, to:String?){
+    /// The iPhone half of the missed-call notice, worded to match Android's
+    /// (`TVMissedCallNotification`): title "Missed call", body the caller's
+    /// name.
+    ///
+    /// The title used to be `NSLocalizedString("notification_missed_call")`
+    /// formatted with the name. Upstream expects the host app to ship that key
+    /// in its own Localizable.strings (README FAQ); an app that doesn't gets
+    /// the KEY back, and a key with no `%@` swallows the name — so the lock
+    /// screen read the bare text `notification_missed_call` (smalltalk_app,
+    /// 2026-10-07). The string now carries its own English default via
+    /// `value:`, so a host that ships no strings file still reads properly,
+    /// and one that does can still override it under the new key.
+    func showMissedCallNotification(from:String?, to:String?, callerName ringName:String? = nil){
         guard UserDefaults.standard.optionalBool(forKey: "show-notifications") ?? true else{return}
         let notificationCenter = UNUserNotificationCenter.current()
 
@@ -757,8 +777,11 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
                 userName = self.clients[from]
             }
             
-            let title = userName ?? self.clients["defaultCaller"] ?? self.defaultCaller
-            content.title = String(format:  NSLocalizedString("notification_missed_call", comment: ""),title)
+            let name = ringName ?? userName ?? self.clients["defaultCaller"] ?? self.defaultCaller
+            content.title = NSLocalizedString("notification_missed_call_title",
+                                              value: "Missed call",
+                                              comment: "Title of the notice an unanswered call leaves")
+            content.body = name
 
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
             let request = UNNotificationRequest(identifier: UUID().uuidString,
